@@ -74,6 +74,47 @@ const Snd = {
   init() {
     if (this.ac) return;
     try { this.ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* ignore */ }
+    this.loadVoices(); this.loadCommon();
+  },
+  bufs: {}, last: {}, cur: {}, com: {},
+  loadCommon() {
+    if (!this.ac || typeof SFXMAP === 'undefined') return;
+    for (const [k, names] of Object.entries(SFXMAP)) {
+      this.com[k] = [];
+      names.forEach(nm => fetch('assets/sfx/common/' + nm + '.wav').then(r => r.arrayBuffer()).then(b => this.ac.decodeAudioData(b)).then(buf => this.com[k].push(buf)).catch(() => {}));
+    }
+  },
+  sample(k) {
+    const l = this.com[k]; if (!l || !l.length) return false;
+    const t = this.ac.currentTime, lim = (k === 'hit' || k === 'move') ? 0.05 : 0.08;
+    if (this.last['c' + k] && t - this.last['c' + k] < lim) return true;
+    this.last['c' + k] = t;
+    const s = this.ac.createBufferSource(), g = this.ac.createGain();
+    s.buffer = l[Math.floor(Math.random() * l.length)]; g.gain.value = (k === 'move' || k === 'hit') ? 0.55 : 0.7; s.connect(g); g.connect(this.ac.destination); s.start();
+    return true;
+  },
+  loadVoices() {
+    if (!this.ac || typeof VOICES === 'undefined') return;
+    for (const [id, m] of Object.entries(VOICES)) {
+      this.bufs[id] = {};
+      for (const [kind, n] of Object.entries(m)) {
+        const names = (kind === 'hit' || kind === 'hurt') ? Array.from({ length: n }, (_, i) => kind + (i + 1)) : (n ? [kind] : []);
+        this.bufs[id][kind] = [];
+        for (const nm of names) {
+          fetch('assets/sfx/' + id + '/' + nm + '.wav').then(r => r.arrayBuffer()).then(b => this.ac.decodeAudioData(b)).then(buf => this.bufs[id][kind].push(buf)).catch(() => {});
+        }
+      }
+    }
+  },
+  voice(id, kind, chance = 1) {
+    if (!this.ac || this.muted || Math.random() > chance) return;
+    const list = this.bufs[id] && this.bufs[id][kind]; if (!list || !list.length) return;
+    const t = this.ac.currentTime, major = kind === 'ult' || kind === 'ultfire' || kind === 'defeat';
+    if (!major && this.last[id] && t - this.last[id] < 0.35) return;
+    if (this.cur[id]) { try { this.cur[id].stop(); } catch (e) { /* ignore */ } }
+    const s = this.ac.createBufferSource(), g = this.ac.createGain();
+    s.buffer = list[Math.floor(Math.random() * list.length)]; g.gain.value = major ? 1 : 0.8; s.connect(g); g.connect(this.ac.destination); s.start();
+    this.last[id] = t; this.cur[id] = s;
   },
   tone(f0, f1, d, type = 'square', vol = 0.06) {
     if (!this.ac || this.muted) return;
@@ -90,6 +131,7 @@ const Snd = {
     g.gain.value = vol; s.buffer = b; s.connect(g); g.connect(this.ac.destination); s.start();
   },
   play(k) {
+    if (this.ac && !this.muted && this.sample(k)) return;
     switch (k) {
       case 'hit': this.noise(0.08, 0.07); this.tone(220, 80, 0.08, 'square', 0.05); break;
       case 'heavy': this.noise(0.2, 0.12); this.tone(140, 40, 0.2, 'sawtooth', 0.08); break;
@@ -252,7 +294,7 @@ class Battle {
       tgt.shieldHit = 0.25; Snd.play('block'); this.spark(tgt.x + tgt.face * 30, cy, '#bfe9ff', 6, 160);
       if (tgt.guard <= 0) { tgt.guard = 0; tgt.guardBroken = 1.3; this.spark(tgt.x, cy, '#7fe3ff', 18, 320); this.pop(tgt.x, cy - 40, 'GARDE BRISÉE', '#ff9a3a'); this.stun(tgt, 0.7); }
     } else {
-      Snd.play(kind === 'ult' ? 'heavy' : 'hit');
+      Snd.play(kind === 'ult' ? 'heavy' : 'hit'); if (tgt.hp - D > 0) Snd.voice(tgt.def.id, 'hurt', kind === 'ult' ? 1 : 0.65);
       this.spark(tgt.x, cy, kind === 'ult' ? '#ffe45f' : '#ffffff', kind === 'ult' ? 22 : 9);
       if (tgt.hitImm <= 0 || kind === 'ult') { this.stun(tgt, kind === 'ult' ? 0.5 : 0.22); tgt.hitImm = 0.55; }
       tgt.vx = sign(tgt.x - att.x) * (kind === 'ult' ? 420 : kind === 'melee3' ? 300 : 160);
@@ -268,7 +310,7 @@ class Battle {
   }
   stun(f, d) { if (f.state === 'ko') return; f.state = 'hurt'; f.st = d; f.stDur = d; f.combo = 0; f.charging = false; f.fired = true; }
   ko(f) {
-    f.hp = 0; f.alive = false; f.state = 'ko'; f.koT = 0; f.st = 99; Snd.play('ko'); this.shake = 12;
+    f.hp = 0; f.alive = false; f.state = 'ko'; f.koT = 0; f.st = 99; Snd.play('ko'); Snd.voice(f.def.id, 'defeat'); this.shake = 12;
     const team = this.team(f);
     if (team === this.e) this.stats.kos++;
     this.slow = 0.25;
@@ -299,7 +341,7 @@ class Battle {
     const col = ult ? f.def.ultColor : STYLES[f.def.style].c;
     const bm = ult && BEAM[f.def.id] && IMG['beam_' + f.def.id] && IMG['beam_' + f.def.id].width ? f.def.id : null;
     this.projs.push({ x: f.x + f.face * 40, y: f.y, ox: f.x + f.face * 34, vx: f.face * (ult ? (bm ? 500 : 420) : 560), r: ult ? (bm && !BEAM[bm].ball ? 54 : 40) : 13, P: ult ? 150 : 34, kind, owner: f, color: col, life: 2.5, trail: [], beam: bm, dead: false });
-    Snd.play(ult ? 'ultfire' : 'blast');
+    Snd.play(ult ? 'ultfire' : 'blast'); if (ult) Snd.voice(f.def.id, 'ultfire');
     if (ult) this.shake = Math.max(this.shake, 6);
   }
 
@@ -344,10 +386,10 @@ class Battle {
       f.dash = [dx / n, dy / n]; f.ki -= COST.dash; f.state = 'dash'; f.st = f.stDur = 0.2; f.inv = 0.24; f.dashCd = 0.45; Snd.play('dash');
       this.spark(f.x, f.y - 60, '#ffffff', 6, 120); return;
     }
-    if (inp.ult && f.ki >= COST.ult) { f.ki -= COST.ult; f.state = 'ult'; f.st = f.stDur = 0.7; f.fired = false; Snd.play('ult'); return; }
-    if (inp.blast && f.ki >= COST.blast) { f.ki -= COST.blast; f.state = 'cast'; f.st = f.stDur = 0.26; f.fired = false; return; }
+    if (inp.ult && f.ki >= COST.ult) { f.ki -= COST.ult; f.state = 'ult'; f.st = f.stDur = 0.7; f.fired = false; Snd.play('ult'); Snd.voice(f.def.id, 'ult'); return; }
+    if (inp.blast && f.ki >= COST.blast) { f.ki -= COST.blast; f.state = 'cast'; f.st = f.stDur = 0.26; f.fired = false; Snd.voice(f.def.id, 'hit', 0.5); return; }
     if (inp.atk) { if (f.comboT <= 0 && f.combo >= 3) f.combo = 0; if (f.comboT <= 0) f.combo = 0; this.startAtk(f); return; }
-    if (inp.charge && !f.guarding) { f.charging = true; if (Math.random() < 0.4) this.parts.push({ x: f.x + rand(-30, 30), y: f.y - rand(10, 120), vx: 0, vy: -rand(60, 140), life: 0.5, max: 0.5, color: STYLES[def.style].c, size: 3 }); return; }
+    if (inp.charge && !f.guarding) { if (!f.charging && this.t - (f.cvT || -9) > 2.2) { f.cvT = this.t; Snd.voice(def.id, 'charge'); } f.charging = true; if (Math.random() < 0.4) this.parts.push({ x: f.x + rand(-30, 30), y: f.y - rand(10, 120), vx: 0, vy: -rand(60, 140), life: 0.5, max: 0.5, color: STYLES[def.style].c, size: 3 }); return; }
     const k = f.guarding ? 0.3 : 1;
     f.walking = !!(inp.mx || inp.my) && !f.guarding; if (f.walking) f.wt += dt * 9;
     f.x += inp.mx * 285 * spd * k * dt; f.y += inp.my * 190 * spd * k * dt; this.clampPos(f);
@@ -355,6 +397,7 @@ class Battle {
   startAtk(f) {
     f.combo = Math.min(3, f.combo + 1); const m = MELEE[f.combo - 1];
     f.state = 'atk'; f.st = f.stDur = m.dur; f.didHit = false; f.bufAtk = false;
+    Snd.voice(f.def.id, 'hit', f.combo === 3 ? 0.9 : 0.4);
   }
   clampPos(f) { f.y = clamp(f.y, BOUNDS.y0, BOUNDS.y1); const [a, b] = boundsX(f.y); f.x = clamp(f.x, a, b); }
 

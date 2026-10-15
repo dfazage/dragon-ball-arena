@@ -32,6 +32,8 @@ Goku, Vegeta, Gohan, Piccolo, Freezer, Cell, Majin Boo, Trunks du futur.
 
 Dragon Ball © Bird Studio / Shueisha / Toei Animation. Ce projet est un hommage de fan, sans but lucratif, non affilié à Toei, Shueisha ou Bandai Namco. Les sprites proviennent de la communauté fan (The Spriters Resource et auteurs ci-dessous) et **ne sont pas couverts par la licence du code**. Sur demande des ayants droit, ils seront retirés.
 
+**Sons** : voix des combattants issues de *Dragon Ball Z: Supersonic Warriors* (GBA) et effets sonores de *Supersonic Warriors 2* (DS), extraits par la communauté et récupérés sur The Sounds Resource. Ils ne sont pas couverts par la licence du code et seront retirés sur demande. La page `sfx-test.html` permet d'écouter la banque et d'ajuster la correspondance (`js/sfxmap.js`).
+
 | Perso | Source | Auteur |
 |---|---|---|
 | Goku, Vegeta | Ultimate LSW | qsab101 |

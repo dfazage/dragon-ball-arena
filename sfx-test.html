@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>Test des effets sonores</title>
+<style>body{font:14px sans-serif;background:#111;color:#eee;padding:16px}button{margin:3px;padding:6px 10px;background:#234;color:#fff;border:1px solid #567;cursor:pointer}h3{margin:14px 0 4px}</style>
+<h2>Banque d'effets (cliquer pour écouter)</h2><p>Note l'identifiant de ceux que tu veux, puis dis-moi « hit = SE_12, … » pour changer la correspondance.</p><div id="o"></div>
+<script src="js/sfxmap.js"></script>
+<script>
+const ids=[];for(let i=0;i<40;i++)ids.push('SE_'+i.toString(16).toUpperCase().padStart(2,'0'));
+for(let i=0;i<22;i++)ids.push('SYSSE_'+i.toString(16).toUpperCase().padStart(2,'0'));
+for(let i=0;i<7;i++)ids.push('CLEARSE_'+i.toString(16).toUpperCase().padStart(2,'0'));
+const o=document.getElementById('o');let cur=null;
+function mk(t,list){const h=document.createElement('h3');h.textContent=t;o.append(h);list.forEach(n=>{const b=document.createElement('button');b.textContent=n[0];b.onclick=()=>{if(cur)cur.pause();cur=new Audio(n[1]);cur.play()};o.append(b)})}
+mk('Actuellement utilisés dans le jeu',Object.entries(SFXMAP).flatMap(([k,l])=>l.map(n=>[n+' ('+k+')','assets/sfx/common/'+n+'.wav'])));
+mk('Toute la banque',ids.map(n=>[n,'assets/sfx/lib/'+n+'.wav']));
+</script>
