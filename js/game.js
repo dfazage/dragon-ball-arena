@@ -116,13 +116,13 @@ const whiteCache = new Map();
 
 function loadImages(onProgress) {
   const list = ['arena_tournoi.jpg'];
-  ROSTER.forEach(r => { list.push(r.id + '_idle.png', r.id + '_por.png', 'frames/' + r.id + '.png'); });
+  ROSTER.forEach(r => { list.push(r.id + '_idle.png', r.id + '_por.png', 'frames/' + r.id + '.png', 'beams/' + r.id + '.png'); });
   let done = 0;
   return Promise.all(list.map(f => new Promise(res => {
     const im = new Image();
     im.onload = im.onerror = () => { done++; onProgress(done / list.length); res(); };
     im.src = 'assets/' + f;
-    IMG[f.replace(/\.(png|jpg)$/, '').replace('frames/', 'atlas_')] = im;
+    IMG[f.replace(/\.(png|jpg)$/, '').replace('frames/', 'atlas_').replace('beams/', 'beam_')] = im;
   })));
 }
 
@@ -201,7 +201,13 @@ class Team {
 const MELEE = [{ p: 15, dur: 0.30, lunge: 16 }, { p: 15, dur: 0.30, lunge: 16 }, { p: 24, dur: 0.46, lunge: 30 }];
 const COST = { blast: 10, ult: 60, dash: 8 };
 
-const AURA = { goku: ['#e6f7ff', '#4fb4ff'], vegeta: ['#e6f7ff', '#6a8cff'] };
+const AURA = {};
+// sprites de faisceaux : h = hauteur à l'écran, capL/capR = parts non étirées (fraction de la largeur)
+const BEAM = {
+  goku: { h: 190, capL: 0.26, capR: 0.30 }, vegeta: { h: 210, capL: 0.24, capR: 0.28 }, gohan: { h: 120, capL: 0.34, capR: 0.34 },
+  piccolo: { h: 56, capL: 0.22, capR: 0.22 }, cell: { h: 170, capL: 0.34, capR: 0.36 }, trunks: { h: 96, capL: 0.25, capR: 0.35 },
+  freezer: { ball: true, h: 150 }, boo: { ball: true, h: 150 },
+};
 function auraFlames(cx, base, hgt, cols, t) {
   for (let k = -6; k <= 6; k++) {
     const hh = hgt * (0.55 + 0.45 * Math.sin(t * 11 + k * 1.9)) * (1 - Math.abs(k) / 8), x = cx + k * 12;
@@ -291,7 +297,8 @@ class Battle {
   fire(f, kind) {
     const ult = kind === 'ult';
     const col = ult ? f.def.ultColor : STYLES[f.def.style].c;
-    this.projs.push({ x: f.x + f.face * 40, y: f.y, vx: f.face * (ult ? 420 : 560), r: ult ? 38 : 13, P: ult ? 150 : 34, kind, owner: f, color: col, life: 2.5, trail: [] });
+    const bm = ult && BEAM[f.def.id] && IMG['beam_' + f.def.id] && IMG['beam_' + f.def.id].width ? f.def.id : null;
+    this.projs.push({ x: f.x + f.face * 40, y: f.y, ox: f.x + f.face * 34, vx: f.face * (ult ? (bm ? 500 : 420) : 560), r: ult ? (bm && !BEAM[bm].ball ? 54 : 40) : 13, P: ult ? 150 : 34, kind, owner: f, color: col, life: 2.5, trail: [], beam: bm, dead: false });
     Snd.play(ult ? 'ultfire' : 'blast');
     if (ult) this.shake = Math.max(this.shake, 6);
   }
@@ -446,18 +453,20 @@ class Battle {
     };
   }
   updateProjs(dt) {
+    const endProj = p => { if (p.beam) { p.dead = true; p.life = 0.3; p.vx = 0; } else p.life = 0; };
     for (const p of this.projs) {
-      p.x += p.vx * dt; p.life -= dt; p.trail.push([p.x, p.y]); if (p.trail.length > 8) p.trail.shift();
+      p.life -= dt; if (p.dead) continue;
+      p.x += p.vx * dt; p.trail.push([p.x, p.y]); if (p.trail.length > 8) p.trail.shift();
       const tgt = this.foe(p.owner);
       if (tgt.alive && tgt.state !== 'ko' && Math.abs(p.x - tgt.x) < p.r + 24 && Math.abs(p.y - tgt.y) < 22 + p.r * 0.8) {
-        if (tgt.inv <= 0) { this.damage(p.owner, tgt, p.P, p.kind); p.life = 0; }
+        if (tgt.inv <= 0) { this.damage(p.owner, tgt, p.P, p.kind); endProj(p); }
       }
-      if (p.x < -60 || p.x > W + 60) p.life = 0;
+      if (p.x < -60 || p.x > W + 60) endProj(p);
     }
     // collisions projectile / projectile
     for (let i = 0; i < this.projs.length; i++) for (let j = i + 1; j < this.projs.length; j++) {
       const a = this.projs[i], b = this.projs[j];
-      if (a.owner === b.owner || a.life <= 0 || b.life <= 0) continue;
+      if (a.owner === b.owner || a.life <= 0 || b.life <= 0 || a.dead || b.dead) continue;
       if (Math.abs(a.x - b.x) < a.r + b.r && Math.abs(a.y - b.y) < a.r + b.r) {
         this.spark((a.x + b.x) / 2, a.y - 60, '#ffffff', 12);
         if (a.kind === 'ult' && b.kind !== 'ult') b.life = 0; else if (b.kind === 'ult' && a.kind !== 'ult') a.life = 0; else a.life = b.life = 0;
@@ -544,7 +553,30 @@ class Battle {
     if (hit > 0) { ctx.globalAlpha = hit; ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.beginPath(); ctx.ellipse(cx, cy, rx + (1 - hit) * 10, ry + (1 - hit) * 10, 0, f.face > 0 ? -0.9 : Math.PI - 0.9, f.face > 0 ? 0.9 : Math.PI + 0.9); ctx.stroke(); }
     ctx.restore();
   }
+  drawBeam(p) {
+    const cfg = BEAM[p.beam], im = IMG['beam_' + p.beam], dir = sign(p.owner.face) || 1, sc = cfg.h / im.height, cy = p.y - 108;
+    ctx.save(); ctx.globalAlpha = p.dead ? clamp(p.life / 0.3, 0, 1) : 1;
+    const pulse = 1 + 0.05 * Math.sin(this.t * 38);
+    if (cfg.ball) {
+      const sz = cfg.h * pulse, bx = p.x;
+      const gr = ctx.createRadialGradient(bx, cy, sz * 0.2, bx, cy, sz * 0.85); gr.addColorStop(0, p.color + '88'); gr.addColorStop(1, p.color + '00'); ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(bx, cy, sz * 0.85, 0, 6.3); ctx.fill();
+      ctx.globalAlpha = p.dead ? clamp(p.life / 0.3, 0, 1) : 1; ctx.drawImage(im, bx - sz / 2, cy - sz * im.height / im.width / 2, sz, sz * im.height / im.width);
+      ctx.restore(); return;
+    }
+    const w = im.width, h = im.height, cl = Math.round(w * cfg.capL), cr = Math.round(w * cfg.capR), H = h * sc * pulse;
+    const capRd = cr * sc, capLd = cl * sc, len = Math.max(Math.abs(p.x - p.ox) + capRd * 0.5, (capLd + capRd) * 0.5), k = Math.min(1, len / (capLd + capRd));
+    ctx.translate(p.ox, cy); ctx.scale(dir, 1);
+    const draw = (extra) => {
+      ctx.drawImage(im, 0, 0, cl, h, 0, -H / 2 - extra, capLd * k, H + extra * 2);
+      ctx.drawImage(im, cl, 0, w - cl - cr, h, capLd * k - 0.5, -H / 2 - extra, len - (capLd + capRd) * k + 1, H + extra * 2);
+      ctx.drawImage(im, w - cr, 0, cr, h, len - capRd * k, -H / 2 - extra, capRd * k, H + extra * 2);
+    };
+    draw(0);
+    ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha *= 0.28; draw(H * 0.04 * Math.sin(this.t * 25));
+    ctx.restore();
+  }
   drawProj(p) {
+    if (p.beam) { this.drawBeam(p); return; }
     ctx.save();
     for (let i = 0; i < p.trail.length; i++) { const [x, y] = p.trail[i]; ctx.globalAlpha = (i / p.trail.length) * 0.35; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(x, y - 70, p.r * (0.4 + i / p.trail.length * 0.6), 0, 6.3); ctx.fill(); }
     ctx.globalAlpha = 1;
