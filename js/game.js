@@ -116,13 +116,13 @@ const whiteCache = new Map();
 
 function loadImages(onProgress) {
   const list = ['arena_tournoi.jpg'];
-  ROSTER.forEach(r => { list.push(r.id + '_idle.png', r.id + '_por.png'); });
+  ROSTER.forEach(r => { list.push(r.id + '_idle.png', r.id + '_por.png', 'frames/' + r.id + '.png'); });
   let done = 0;
   return Promise.all(list.map(f => new Promise(res => {
     const im = new Image();
     im.onload = im.onerror = () => { done++; onProgress(done / list.length); res(); };
     im.src = 'assets/' + f;
-    IMG[f.replace(/\.(png|jpg)$/, '')] = im;
+    IMG[f.replace(/\.(png|jpg)$/, '').replace('frames/', 'atlas_')] = im;
   })));
 }
 
@@ -313,7 +313,7 @@ class Battle {
       this.clampPos(f); return;
     }
     if (f.state === 'cast') { f.st -= dt; if (!f.fired && f.st < f.stDur * 0.5) { f.fired = true; this.fire(f, 'blast'); } if (f.st <= 0) f.state = 'idle'; return; }
-    if (f.state === 'ult') { f.st -= dt; f.lunge = 1 - f.st / f.stDur; if (!f.fired && f.st <= 0.12) { f.fired = true; this.fire(f, 'ult'); } if (f.st <= 0) { f.state = 'idle'; f.lunge = 0; } return; }
+    if (f.state === 'ult') { f.st -= dt; f.lunge = 1 - f.st / f.stDur; if (!f.fired && f.st <= 0.3) { f.fired = true; this.fire(f, 'ult'); } if (f.st <= 0) { f.state = 'idle'; f.lunge = 0; } return; }
     if (f.state === 'dash') { f.st -= dt; f.x += f.dash[0] * 720 * dt; f.y += f.dash[1] * 520 * dt; this.clampPos(f); if (f.st <= 0) { f.state = 'idle'; } return; }
 
     // idle : actions
@@ -466,26 +466,44 @@ class Battle {
     ctx.restore();
     this.drawHUD();
   }
+  pickFrame(f) {
+    const fr = typeof FRAMES !== 'undefined' && FRAMES[f.def.id], at = IMG['atlas_' + f.def.id];
+    if (!fr || !at || !at.width) return null;
+    let r = fr.idle;
+    const pair = k => { const v = fr[k]; return Array.isArray(v[0]) ? v : [v, v]; };
+    if (f.state === 'ko') r = fr.ko;
+    else if (f.state === 'hurt') r = f.guardBroken > 0 ? fr.stun : fr.hurt;
+    else if (f.state === 'dash') r = fr.dash;
+    else if (f.state === 'atk') { const p = 1 - f.st / f.stDur, v = pair('atk' + f.combo); r = p < 0.35 ? v[0] : v[1]; }
+    else if (f.state === 'cast') r = fr.cast;
+    else if (f.state === 'ult') r = f.fired ? fr.ultf : fr.ultw;
+    else if (f.guarding) r = fr.guard;
+    return { at, r, ref: fr.idle };
+  }
   drawFighter(f) {
-    const im = f.img; if (!im || !im.width) return; const s = f.def.scale, w = im.width * s, h = im.height * s;
+    const pf = this.pickFrame(f);
+    const im = pf ? pf.at : f.img; if (!im || !im.width) return;
+    const s = f.def.scale, sw = pf ? pf.r[2] : im.width, sh = pf ? pf.r[3] : im.height, w = sw * s, h = sh * s, h0 = pf ? pf.ref[3] * s : h;
+    const draw = (src, a) => { if (pf) ctx.drawImage(src, pf.r[0], pf.r[1], sw, sh, -w / 2, -h, w, h); else ctx.drawImage(src, -w / 2, -h, w, h); };
     ctx.save();
     ctx.translate(f.x, f.y);
     const idle = f.state === 'idle', moving = Math.abs(f.vx) > 5;
     const bob = idle ? Math.sin(f.anim * 6) * 2 : 0;
-    if (f.state === 'ko') { const p = clamp(f.koT / 0.6, 0, 1); ctx.rotate(f.face * -p * 1.4); ctx.globalAlpha = 1 - clamp((f.koT - 0.5) / 0.7, 0, 1); }
+    if (f.state === 'ko') { const p = clamp(f.koT / 0.6, 0, 1); if (!pf) ctx.rotate(f.face * -p * 1.4); ctx.globalAlpha = 1 - clamp((f.koT - 0.5) / 0.7, 0, 1); }
     else if (f.inv > 0 && f.state !== 'dash') ctx.globalAlpha = Math.sin(f.anim * 40) > 0 ? 0.35 : 0.9;
     if (f.state === 'dash') ctx.globalAlpha = 0.6;
-    if (f.charging) { const g = ctx.createRadialGradient(0, -h / 2, 10, 0, -h / 2, 110); g.addColorStop(0, STYLES[f.def.style].c + 'aa'); g.addColorStop(1, STYLES[f.def.style].c + '00'); ctx.fillStyle = g; ctx.fillRect(-120, -h - 40, 240, h + 80); }
-    if (f.state === 'ult') { const r = 40 + f.lunge * 90; const g = ctx.createRadialGradient(0, -h / 2, 5, 0, -h / 2, r); g.addColorStop(0, f.def.ultColor + 'ee'); g.addColorStop(1, f.def.ultColor + '00'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, -h / 2, r, 0, 6.3); ctx.fill(); }
+    if (f.charging) { const g = ctx.createRadialGradient(0, -h0 / 2, 10, 0, -h0 / 2, 110); g.addColorStop(0, STYLES[f.def.style].c + 'aa'); g.addColorStop(1, STYLES[f.def.style].c + '00'); ctx.fillStyle = g; ctx.fillRect(-120, -h0 - 40, 240, h0 + 80); }
+    if (f.state === 'ult') { const r = 40 + f.lunge * 90; const g = ctx.createRadialGradient(0, -h0 / 2, 5, 0, -h0 / 2, r); g.addColorStop(0, f.def.ultColor + 'ee'); g.addColorStop(1, f.def.ultColor + '00'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, -h0 / 2, r, 0, 6.3); ctx.fill(); }
     ctx.translate(f.face * f.lunge * 10, bob + (f.state === 'hurt' ? 2 : 0));
-    ctx.rotate(f.state === 'hurt' ? -f.face * 0.12 : moving ? f.face * 0.04 : f.state === 'atk' ? f.face * 0.1 * f.lunge : 0);
+    ctx.rotate(pf ? (moving && f.state === 'idle' ? f.face * 0.04 : 0) : f.state === 'hurt' ? -f.face * 0.12 : moving ? f.face * 0.04 : f.state === 'atk' ? f.face * 0.1 * f.lunge : 0);
     ctx.scale(f.face, 1 + (f.state === 'cast' ? -0.04 : 0));
-    ctx.drawImage(im, -w / 2, -h, w, h);
-    if (f.flash > 0) { ctx.globalAlpha = clamp(f.flash / 0.12, 0, 1) * 0.85; ctx.drawImage(whiteOf(im), -w / 2, -h, w, h); }
+    if (f.state === 'atk' && f.lunge > 0.5) { ctx.save(); ctx.globalAlpha *= 0.35; ctx.translate(-f.face * 14, 0); draw(im); ctx.restore(); }
+    draw(im);
+    if (f.flash > 0) { ctx.globalAlpha = clamp(f.flash / 0.12, 0, 1) * 0.85; draw(whiteOf(im)); }
     ctx.restore();
-    if (f.guarding) { ctx.save(); ctx.strokeStyle = 'rgba(160,230,255,0.9)'; ctx.fillStyle = 'rgba(120,200,255,0.18)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(f.x + f.face * 6, f.y - h / 2, 56, h / 2 + 8, 0, 0, 6.3); ctx.fill(); ctx.stroke(); ctx.restore(); }
-    if (f.state === 'atk') { ctx.save(); ctx.globalAlpha = 0.5 * f.lunge; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(f.x + f.face * 52, f.y - h * 0.55, 34, f.face > 0 ? -1.2 : Math.PI - 1.2 + 0.0, f.face > 0 ? 1.2 : Math.PI + 1.2); ctx.stroke(); ctx.restore(); }
-    if (this.team(f) === this.p && f === this.p.f && this.state !== 'end') txt('▼', f.x, f.y - h - 8, { size: 16, align: 'center', color: '#ffd23f', shadow: '#000' });
+    if (f.guarding) { ctx.save(); ctx.strokeStyle = 'rgba(160,230,255,0.9)'; ctx.fillStyle = 'rgba(120,200,255,0.18)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(f.x + f.face * 6, f.y - h0 / 2, 56, h0 / 2 + 8, 0, 0, 6.3); ctx.fill(); ctx.stroke(); ctx.restore(); }
+    if (f.state === 'atk') { ctx.save(); ctx.globalAlpha = 0.5 * f.lunge; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(f.x + f.face * 52, f.y - h0 * 0.55, 34, f.face > 0 ? -1.2 : Math.PI - 1.2 + 0.0, f.face > 0 ? 1.2 : Math.PI + 1.2); ctx.stroke(); ctx.restore(); }
+    if (this.team(f) === this.p && f === this.p.f && this.state !== 'end') txt('▼', f.x, f.y - h0 - 8, { size: 16, align: 'center', color: '#ffd23f', shadow: '#000' });
   }
   drawProj(p) {
     ctx.save();
