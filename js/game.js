@@ -186,7 +186,7 @@ class Fighter {
     this.x = x; this.y = y; this.vx = 0; this.vy = 0; this.state = 'idle'; this.st = 0; this.stDur = 1;
     this.combo = 0; this.comboT = 0; this.inv = 0; this.hitImm = 0; this.guarding = false; this.charging = false;
     this.flash = 0; this.face = 1; this.dashCd = 0; this.guardBroken = 0; this.anim = Math.random() * 6;
-    this.walking = false; this.wt = 0; this.didHit = false; this.bufAtk = false; this.fired = false; this.dash = [0, 0]; this.koT = 0; this.lunge = 0;
+    this.walking = false; this.wt = 0; this.gAge = 0; this.shieldHit = 0; this.didHit = false; this.bufAtk = false; this.fired = false; this.dash = [0, 0]; this.koT = 0; this.lunge = 0;
   }
 }
 
@@ -200,6 +200,19 @@ class Team {
 
 const MELEE = [{ p: 15, dur: 0.30, lunge: 16 }, { p: 15, dur: 0.30, lunge: 16 }, { p: 24, dur: 0.46, lunge: 30 }];
 const COST = { blast: 10, ult: 60, dash: 8 };
+
+const AURA = { goku: ['#e6f7ff', '#4fb4ff'], vegeta: ['#e6f7ff', '#6a8cff'] };
+function auraFlames(cx, base, hgt, cols, t) {
+  for (let k = -6; k <= 6; k++) {
+    const hh = hgt * (0.55 + 0.45 * Math.sin(t * 11 + k * 1.9)) * (1 - Math.abs(k) / 8), x = cx + k * 12;
+    for (let layer = 0; layer < 2; layer++) {
+      ctx.fillStyle = cols[layer]; ctx.globalAlpha = layer ? 0.75 : 0.55;
+      const hl = hh * (layer ? 0.55 : 1), step = 6;
+      for (let y = 0; y < hl; y += step) { const w = 12 * (1 - y / (hl + 1)) + 3; ctx.fillRect(Math.round((x - w / 2) / 3) * 3, Math.round((base - y - step) / 3) * 3, Math.round(w / 3) * 3, step); }
+    }
+  }
+  ctx.globalAlpha = 1;
+}
 
 class Battle {
   constructor(playerIds, enemyIds, diff) {
@@ -230,8 +243,8 @@ class Battle {
     if (blocked) {
       D *= kind === 'ult' ? 0.5 : 0.2;
       tgt.guard -= kind === 'ult' ? 55 : 10 + P * 0.5;
-      Snd.play('block'); this.spark(tgt.x + tgt.face * 30, cy, '#bfe9ff', 6, 160);
-      if (tgt.guard <= 0) { tgt.guard = 0; tgt.guardBroken = 1.3; this.pop(tgt.x, cy - 40, 'GARDE BRISÉE', '#ff9a3a'); this.stun(tgt, 0.7); }
+      tgt.shieldHit = 0.25; Snd.play('block'); this.spark(tgt.x + tgt.face * 30, cy, '#bfe9ff', 6, 160);
+      if (tgt.guard <= 0) { tgt.guard = 0; tgt.guardBroken = 1.3; this.spark(tgt.x, cy, '#7fe3ff', 18, 320); this.pop(tgt.x, cy - 40, 'GARDE BRISÉE', '#ff9a3a'); this.stun(tgt, 0.7); }
     } else {
       Snd.play(kind === 'ult' ? 'heavy' : 'hit');
       this.spark(tgt.x, cy, kind === 'ult' ? '#ffe45f' : '#ffffff', kind === 'ult' ? 22 : 9);
@@ -291,8 +304,9 @@ class Battle {
     if (f.state === 'ko') { f.koT += dt; return; }
     if (f.state !== 'dash') f.face = foe.x >= f.x ? 1 : -1;
     if (!f.charging) f.ki = Math.min(100, f.ki + 3 * dt); else f.ki = Math.min(100, f.ki + 26 * dt);
-    f.guarding = false; if (f.state === 'idle' && inp.guard && f.guardBroken <= 0 && f.guard > 0) { f.guarding = true; f.guard -= 14 * dt; } else if (f.guard < 100 && f.guardBroken <= 0) f.guard = Math.min(100, f.guard + 18 * dt);
+    f.shieldHit -= dt; f.guarding = false; if (f.state === 'idle' && inp.guard && f.guardBroken <= 0 && f.guard > 0) { f.guarding = true; f.guard -= 14 * dt; } else if (f.guard < 100 && f.guardBroken <= 0) f.guard = Math.min(100, f.guard + 18 * dt);
     if (f.guard < 0) f.guard = 0;
+    f.gAge = f.guarding ? Math.min(1, f.gAge + dt * 9) : 0;
     f.charging = false;
     const spd = def.spd;
 
@@ -480,6 +494,7 @@ class Battle {
     else if (f.state === 'cast') r = fr.cast;
     else if (f.state === 'ult') r = f.fired ? fr.ultf : fr.ultw;
     else if (f.guarding) r = fr.guard;
+    else if (f.charging && fr.charge) { const c = fr.charge; r = Array.isArray(c[0]) ? c[Math.floor(f.anim * 10) % c.length] : c; }
     else if (f.walking && fr.walk) { const w = fr.walk; r = Array.isArray(w[0]) ? w[Math.floor(f.wt) % w.length] : w; }
     return { at, r, ref: fr.idle };
   }
@@ -495,6 +510,10 @@ class Battle {
     if (f.state === 'ko') { const p = clamp(f.koT / 0.6, 0, 1); if (!pf) ctx.rotate(f.face * -p * 1.4); ctx.globalAlpha = 1 - clamp((f.koT - 0.5) / 0.7, 0, 1); }
     else if (f.inv > 0 && f.state !== 'dash') ctx.globalAlpha = Math.sin(f.anim * 40) > 0 ? 0.35 : 0.9;
     if (f.state === 'dash') ctx.globalAlpha = 0.6;
+    if (f.charging) {
+      for (let i = 0; i < 2; i++) { const q = ((f.anim * 1.6 + i * 0.5) % 1); ctx.save(); ctx.globalAlpha = (1 - q) * 0.7; ctx.strokeStyle = STYLES[f.def.style].c; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(0, 2, 30 + q * 70, 7 + q * 16, 0, 0, 6.3); ctx.stroke(); ctx.restore(); }
+      if (AURA[f.def.id]) auraFlames(0, 0, h0 * 1.6, AURA[f.def.id], f.anim);
+    }
     if (f.charging) { const g = ctx.createRadialGradient(0, -h0 / 2, 10, 0, -h0 / 2, 110); g.addColorStop(0, STYLES[f.def.style].c + 'aa'); g.addColorStop(1, STYLES[f.def.style].c + '00'); ctx.fillStyle = g; ctx.fillRect(-120, -h0 - 40, 240, h0 + 80); }
     if (f.state === 'ult') { const r = 40 + f.lunge * 90; const g = ctx.createRadialGradient(0, -h0 / 2, 5, 0, -h0 / 2, r); g.addColorStop(0, f.def.ultColor + 'ee'); g.addColorStop(1, f.def.ultColor + '00'); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, -h0 / 2, r, 0, 6.3); ctx.fill(); }
     ctx.translate(f.face * f.lunge * 10, bob + (f.state === 'hurt' ? 2 : 0));
@@ -504,9 +523,26 @@ class Battle {
     draw(im);
     if (f.flash > 0) { ctx.globalAlpha = clamp(f.flash / 0.12, 0, 1) * 0.85; draw(whiteOf(im)); }
     ctx.restore();
-    if (f.guarding) { ctx.save(); ctx.strokeStyle = 'rgba(160,230,255,0.9)'; ctx.fillStyle = 'rgba(120,200,255,0.18)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(f.x + f.face * 6, f.y - h0 / 2, 56, h0 / 2 + 8, 0, 0, 6.3); ctx.fill(); ctx.stroke(); ctx.restore(); }
+    if (f.guarding || f.shieldHit > 0) this.drawShield(f, h0);
     if (f.state === 'atk') { ctx.save(); ctx.globalAlpha = 0.5 * f.lunge; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(f.x + f.face * 52, f.y - h0 * 0.55, 34, f.face > 0 ? -1.2 : Math.PI - 1.2 + 0.0, f.face > 0 ? 1.2 : Math.PI + 1.2); ctx.stroke(); ctx.restore(); }
     if (this.team(f) === this.p && f === this.p.f && this.state !== 'end') txt('▼', f.x, f.y - h0 - 8, { size: 16, align: 'center', color: '#ffd23f', shadow: '#000' });
+  }
+  drawShield(f, h0) {
+    const ease = clamp(f.gAge, 0, 1), cx = f.x + f.face * 6, cy = f.y - h0 / 2, rx = 60 * (0.6 + 0.4 * ease), ry = (h0 / 2 + 12) * (0.6 + 0.4 * ease);
+    const low = f.guard < 30 || f.guardBroken > 0, col = low ? '255,120,70' : '120,225,255', hit = clamp(f.shieldHit / 0.25, 0, 1);
+    ctx.save(); ctx.globalAlpha = f.guarding ? ease : hit;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 6.3); ctx.save(); ctx.clip();
+    const g = ctx.createRadialGradient(cx, cy, ry * 0.3, cx, cy, ry); g.addColorStop(0, `rgba(${col},0.05)`); g.addColorStop(1, `rgba(${col},${0.30 + 0.35 * hit})`);
+    ctx.fillStyle = g; ctx.fillRect(cx - rx, cy - ry, rx * 2, ry * 2);
+    ctx.strokeStyle = `rgba(${col},${0.35 + 0.4 * hit})`; ctx.lineWidth = 1;
+    const hs = 16, off = (f.anim * 14) % (hs * 1.5);
+    for (let y = cy - ry - hs; y < cy + ry + hs; y += hs * 0.87) { const row = Math.round((y - cy) / (hs * 0.87)); for (let x = cx - rx - hs + ((row & 1) ? hs * 0.5 : 0) + off % hs; x < cx + rx + hs; x += hs) { ctx.beginPath(); for (let k = 0; k < 6; k++) { const a = k * Math.PI / 3 + Math.PI / 6; ctx.lineTo(x + Math.cos(a) * hs * 0.5, y + Math.sin(a) * hs * 0.5); } ctx.closePath(); ctx.stroke(); } }
+    const sy = cy - ry + ((f.anim * 90) % (ry * 2)); ctx.fillStyle = `rgba(255,255,255,0.18)`; ctx.fillRect(cx - rx, sy, rx * 2, 4);
+    ctx.restore();
+    ctx.setLineDash([10, 6]); ctx.lineDashOffset = -f.anim * 40; ctx.lineWidth = 3; ctx.strokeStyle = low && Math.sin(f.anim * 30) > 0 ? '#ffd1b0' : `rgba(${col},0.95)`;
+    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, 6.3); ctx.stroke(); ctx.setLineDash([]);
+    if (hit > 0) { ctx.globalAlpha = hit; ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.beginPath(); ctx.ellipse(cx, cy, rx + (1 - hit) * 10, ry + (1 - hit) * 10, 0, f.face > 0 ? -0.9 : Math.PI - 0.9, f.face > 0 ? 0.9 : Math.PI + 0.9); ctx.stroke(); }
+    ctx.restore();
   }
   drawProj(p) {
     ctx.save();
