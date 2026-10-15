@@ -158,7 +158,7 @@ const whiteCache = new Map();
 
 function loadImages(onProgress) {
   const list = ['arena_tournoi.jpg'];
-  ROSTER.forEach(r => { list.push(r.id + '_idle.png', r.id + '_por.png', 'frames/' + r.id + '.png', 'beams/' + r.id + '.png'); if (SAIYANS.has(r.id)) list.push('frames/' + r.id + '_ssj.png'); });
+  ROSTER.forEach(r => { list.push(r.id + '_idle.png', r.id + '_por.png', 'frames/' + r.id + '.png', 'beams/' + r.id + '.png'); if (typeof FORMS !== 'undefined' && FORMS[r.id]) [...new Set(FORMS[r.id].map(x => x.atlas))].forEach(a => list.push('frames/' + a + '.png')); });
   let done = 0;
   return Promise.all(list.map(f => new Promise(res => {
     const im = new Image();
@@ -218,13 +218,16 @@ function toggleFullscreen() {
 const BOUNDS = { y0: 235, y1: 500 };
 function boundsX(y) { const t = (y - BOUNDS.y0) / (BOUNDS.y1 - BOUNDS.y0); return [140 - 70 * t, 820 + 70 * t]; }
 
-const SAIYANS = new Set(['goku', 'vegeta', 'gohan', 'trunks']);
-const SSJ_TIME = 1.5, SSJ_DUR = 45;
+const MAXFORM = { goku: 3, vegeta: 2, gohan: 2, trunks: 2 };
+const SAIYANS = new Set(Object.keys(MAXFORM));
+const SSJ_DUR = 45;
+const FORM_NAME = ['', 'SUPER SAIYAN', 'SUPER SAIYAN 2', 'SUPER SAIYAN 3'], FORM_TAG = ['', 'SSJ', 'SSJ2', 'SSJ3'];
+const FORM_TIME = [0, 1.5, 2.0, 2.6], FORM_DMG = [1, 1.3, 1.5, 1.75], FORM_DEF = [1, 0.88, 0.82, 0.75], FORM_SPD = [1, 1.12, 1.2, 1.28], FORM_DRAIN = [0, 0, 1.5, 4];
 
 class Fighter {
   constructor(def) {
     this.def = def; this.img = IMG[def.id + '_idle']; this.por = IMG[def.id + '_por'];
-    this.maxhp = def.hp; this.hp = def.hp; this.ki = 30; this.guard = 100; this.ssj = false; this.ssjT = 0; this.ssjLeft = 0;
+    this.maxhp = def.hp; this.hp = def.hp; this.ki = 30; this.guard = 100; this.form = 0; this.formT = 0; this.formLeft = 0;
     this.alive = true; this.reset(0, 0);
   }
   reset(x, y) {
@@ -288,7 +291,7 @@ class Battle {
   damage(att, tgt, P, kind) {
     if (!tgt.alive || tgt.state === 'ko' || tgt.inv > 0) return false;
     const mult = styleMult(att.def.style, tgt.def.style);
-    let D = P * (att.def.atk / tgt.def.def) * mult * rand(0.95, 1.05) * (att.ssj ? 1.3 : 1) * (tgt.ssj ? 0.88 : 1);
+    let D = P * (att.def.atk / tgt.def.def) * mult * rand(0.95, 1.05) * FORM_DMG[att.form] * FORM_DEF[tgt.form];
     const blocked = tgt.guarding && tgt.guardBroken <= 0 && sign(att.x - tgt.x) === tgt.face;
     const cy = tgt.y - 80;
     if (blocked) {
@@ -311,9 +314,9 @@ class Battle {
     if (tgt.hp <= 0) this.ko(tgt);
     return true;
   }
-  goSSJ(f) {
-    f.ssj = true; f.ssjT = 0; f.ssjLeft = SSJ_DUR; f.ki = 100; f.hp = Math.min(f.maxhp, f.hp + f.maxhp * 0.1); f.flash = 0.5; f.inv = Math.max(f.inv, 0.6); this.shake = 16;
-    this.spark(f.x, f.y - 70, '#ffe45f', 34, 420); this.pop(f.x, f.y - 190, 'SUPER SAIYAN !', '#ffe45f');
+  goForm(f) {
+    f.form++; f.formT = 0; f.formLeft = SSJ_DUR; f.ki = 100; f.hp = Math.min(f.maxhp, f.hp + f.maxhp * 0.1); f.flash = 0.5; f.inv = Math.max(f.inv, 0.6); this.shake = 14 + f.form * 4;
+    this.spark(f.x, f.y - 70, '#ffe45f', 24 + f.form * 12, 380 + f.form * 60); this.pop(f.x, f.y - 190, FORM_NAME[f.form] + ' !', '#ffe45f');
     Snd.play('ult'); Snd.voice(f.def.id, 'ult');
   }
   stun(f, d) { if (f.state === 'ko') return; f.state = 'hurt'; f.st = d; f.stDur = d; f.combo = 0; f.charging = false; f.fired = true; }
@@ -364,10 +367,14 @@ class Battle {
     f.shieldHit -= dt; f.guarding = false; if (f.state === 'idle' && inp.guard && f.guardBroken <= 0 && f.guard > 0) { f.guarding = true; f.guard -= 14 * dt; } else if (f.guard < 100 && f.guardBroken <= 0) f.guard = Math.min(100, f.guard + 18 * dt);
     if (f.guard < 0) f.guard = 0;
     f.gAge = f.guarding ? Math.min(1, f.gAge + dt * 9) : 0;
-    if (!f.charging && !f.ssj) f.ssjT = Math.max(0, f.ssjT - dt * 2);
-    if (f.ssj) { f.ssjLeft -= dt; if (f.ssjLeft <= 0) { f.ssj = false; this.pop(f.x, f.y - 170, 'FIN DU SSJ', '#ffffff'); } }
+    if (!f.charging) f.formT = Math.max(0, f.formT - dt * 2);
+    if (f.form > 0) {
+      f.formLeft -= dt; f.ki -= FORM_DRAIN[f.form] * dt;
+      if (f.formLeft <= 0) { f.form = 0; f.formT = 0; this.pop(f.x, f.y - 170, 'FIN DE LA TRANSFORMATION', '#ffffff'); }
+      else if (f.ki <= 0) { f.ki = 5; f.form--; f.formLeft = SSJ_DUR; this.pop(f.x, f.y - 170, f.form ? 'RETOUR ' + FORM_TAG[f.form] : 'FIN DE LA TRANSFORMATION', '#ffffff'); }
+    }
     f.charging = false;
-    const spd = def.spd * (f.ssj ? 1.12 : 1);
+    const spd = def.spd * FORM_SPD[f.form];
 
     if (f.state === 'hurt') { f.st -= dt; f.x += f.vx * dt; f.vx *= Math.pow(0.02, dt); if (f.st <= 0) { f.state = 'idle'; } this.clampPos(f); return; }
     f.x += f.vx * dt; f.vx *= Math.pow(0.02, dt);
@@ -399,7 +406,7 @@ class Battle {
     if (inp.ult && f.ki >= COST.ult) { f.ki -= COST.ult; f.state = 'ult'; f.st = f.stDur = 0.7; f.fired = false; Snd.play('ult'); Snd.voice(f.def.id, 'ult'); return; }
     if (inp.blast && f.ki >= COST.blast) { f.ki -= COST.blast; f.state = 'cast'; f.st = f.stDur = 0.26; f.fired = false; Snd.voice(f.def.id, 'hit', 0.5); return; }
     if (inp.atk) { if (f.comboT <= 0 && f.combo >= 3) f.combo = 0; if (f.comboT <= 0) f.combo = 0; this.startAtk(f); return; }
-    if (inp.charge && !f.guarding) { if (!f.charging && this.t - (f.cvT || -9) > 2.2) { f.cvT = this.t; Snd.voice(def.id, 'charge'); } f.charging = true; if (SAIYANS.has(def.id) && !f.ssj) { if (f.ki >= 99.9) { f.ssjT += dt; if (f.ssjT >= SSJ_TIME) { this.goSSJ(f); return; } } else f.ssjT = Math.max(0, f.ssjT - dt); } if (Math.random() < 0.4) this.parts.push({ x: f.x + rand(-30, 30), y: f.y - rand(10, 120), vx: 0, vy: -rand(60, 140), life: 0.5, max: 0.5, color: STYLES[def.style].c, size: 3 }); return; }
+    if (inp.charge && !f.guarding) { if (!f.charging && this.t - (f.cvT || -9) > 2.2) { f.cvT = this.t; Snd.voice(def.id, 'charge'); } f.charging = true; if (f.form < (MAXFORM[def.id] || 0)) { if (f.ki >= 99.9) { f.formT += dt; if (f.formT >= FORM_TIME[f.form + 1]) { this.goForm(f); return; } } else f.formT = Math.max(0, f.formT - dt); } if (Math.random() < 0.4) this.parts.push({ x: f.x + rand(-30, 30), y: f.y - rand(10, 120), vx: 0, vy: -rand(60, 140), life: 0.5, max: 0.5, color: STYLES[def.style].c, size: 3 }); return; }
     const k = f.guarding ? 0.3 : 1;
     f.walking = !!(inp.mx || inp.my) && !f.guarding; if (f.walking) f.wt += dt * 9;
     f.x += inp.mx * 285 * spd * k * dt; f.y += inp.my * 190 * spd * k * dt; this.clampPos(f);
@@ -433,7 +440,7 @@ class Battle {
         if (Math.random() < d.atk) k.atk = true; else if (Math.random() < 0.4) a.guardT = 0.4; else k.mx = -sign(dx);
       } else if (Math.abs(dy) < 28 && dist > 190 && f.ki >= COST.blast && Math.random() < d.blast) k.blast = true;
       else if (f.ki < 20 && dist > 300 && Math.random() < 0.5) k.charge = true;
-      else if (SAIYANS.has(f.def.id) && !f.ssj && f.ki >= 95 && dist > 330 && Math.random() < 0.6) k.charge = true;
+      else if (f.form < (MAXFORM[f.def.id] || 0) && f.ki >= 95 && dist > 330 && Math.random() < 0.6) k.charge = true;
       else {
         k.mx = Math.abs(dx) > 80 ? sign(dx) : 0; k.my = Math.abs(dy) > 14 ? sign(dy) : 0;
       }
@@ -546,7 +553,7 @@ class Battle {
     this.drawHUD();
   }
   pickFrame(f) {
-    const fr = typeof FRAMES !== 'undefined' && FRAMES[f.def.id], at = (f.ssj && IMG['atlas_' + f.def.id + '_ssj']) || IMG['atlas_' + f.def.id];
+    const fm = f.form > 0 && typeof FORMS !== 'undefined' && FORMS[f.def.id] && FORMS[f.def.id][f.form - 1], fr = fm ? fm.fr : (typeof FRAMES !== 'undefined' && FRAMES[f.def.id]), at = fm ? IMG['atlas_' + fm.atlas] : IMG['atlas_' + f.def.id];
     if (!fr || !at || !at.width) return null;
     let r = fr.idle;
     const pair = k => { const v = fr[k]; return Array.isArray(v[0]) ? v : [v, v]; };
@@ -557,7 +564,7 @@ class Battle {
     else if (f.state === 'cast') r = fr.cast;
     else if (f.state === 'ult') r = f.fired ? fr.ultf : fr.ultw;
     else if (f.guarding) r = fr.guard;
-    else if (f.charging && fr.charge && !f.ssj) { const c = fr.charge; r = Array.isArray(c[0]) ? c[Math.floor(f.anim * 10) % c.length] : c; }
+    else if (f.charging && fr.charge) { const c = fr.charge; r = Array.isArray(c[0]) ? c[Math.floor(f.anim * 10) % c.length] : c; }
     else if (f.walking && fr.walk) { const w = fr.walk; r = Array.isArray(w[0]) ? w[Math.floor(f.wt) % w.length] : w; }
     return { at, r, ref: fr.idle };
   }
@@ -577,13 +584,22 @@ class Battle {
       for (let i = 0; i < 2; i++) { const q = ((f.anim * 1.6 + i * 0.5) % 1); ctx.save(); ctx.globalAlpha = (1 - q) * 0.7; ctx.strokeStyle = STYLES[f.def.style].c; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(0, 2, 30 + q * 70, 7 + q * 16, 0, 0, 6.3); ctx.stroke(); ctx.restore(); }
       if (AURA[f.def.id]) auraFlames(0, 0, h0 * 1.6, AURA[f.def.id], f.anim);
     }
-    if (f.ssj || f.ssjT > 0) {
-      const k = f.ssj ? 1 : f.ssjT / SSJ_TIME, fl = 0.75 + 0.25 * Math.sin(f.anim * 25);
+    if (f.form > 0 || f.formT > 0) {
+      const nf = Math.max(1, f.form), k = f.form > 0 ? 1 : f.formT / FORM_TIME[f.form + 1], fl = 0.75 + 0.25 * Math.sin(f.anim * 25), sz = 1 + 0.3 * (nf - 1);
       ctx.save(); ctx.globalCompositeOperation = 'lighter';
-      const g = ctx.createRadialGradient(0, -h0 / 2, 8, 0, -h0 / 2, 70 + 55 * k); g.addColorStop(0, 'rgba(255,230,90,' + (0.55 * k * fl) + ')'); g.addColorStop(1, 'rgba(255,200,40,0)');
-      ctx.fillStyle = g; ctx.fillRect(-140, -h0 - 80, 280, h0 + 120);
+      const g = ctx.createRadialGradient(0, -h0 / 2, 8, 0, -h0 / 2, (70 + 55 * k) * sz); g.addColorStop(0, 'rgba(255,230,90,' + (0.55 * k * fl) + ')'); g.addColorStop(1, 'rgba(255,200,40,0)');
+      ctx.fillStyle = g; ctx.fillRect(-170, -h0 - 110, 340, h0 + 150);
       ctx.fillStyle = 'rgba(255,225,80,' + (0.5 * k) + ')';
-      for (let i = 0; i < 7; i++) { const ph = (f.anim * 3 + i * 0.37) % 1, bx = (i - 3) * 11 + Math.sin(f.anim * 9 + i) * 4, bh = (40 + (i % 3) * 22) * (1 - ph * 0.3) * k; ctx.beginPath(); ctx.moveTo(bx - 6, 0); ctx.lineTo(bx, -h0 * 0.55 - bh); ctx.lineTo(bx + 6, 0); ctx.fill(); }
+      const nb = 5 + nf * 2;
+      for (let i = 0; i < nb; i++) { const ph = (f.anim * 3 + i * 0.37) % 1, bx = (i - nb / 2) * (22 / nb * 3) + Math.sin(f.anim * 9 + i) * 4, bh = (40 + (i % 3) * 22) * sz * (1 - ph * 0.3) * k; ctx.beginPath(); ctx.moveTo(bx - 6, 0); ctx.lineTo(bx, -h0 * 0.55 - bh); ctx.lineTo(bx + 6, 0); ctx.fill(); }
+      if (f.form >= 2) {
+        ctx.strokeStyle = 'rgba(190,240,255,0.9)'; ctx.lineWidth = 2;
+        for (let i = 0; i < 2 + f.form; i++) {
+          if (Math.sin(f.anim * 37 + i * 5.1) < 0.2) continue;
+          let x = rand(-34, 34), y = -rand(5, h0); ctx.beginPath(); ctx.moveTo(x, y);
+          for (let n = 0; n < 4; n++) { x += rand(-14, 14); y += rand(-14, 14); ctx.lineTo(x, y); } ctx.stroke();
+        }
+      }
       ctx.restore();
     }
     if (f.charging) { const g = ctx.createRadialGradient(0, -h0 / 2, 10, 0, -h0 / 2, 110); g.addColorStop(0, STYLES[f.def.style].c + 'aa'); g.addColorStop(1, STYLES[f.def.style].c + '00'); ctx.fillStyle = g; ctx.fillRect(-120, -h0 - 40, 240, h0 + 80); }
@@ -596,7 +612,7 @@ class Battle {
     if (f.flash > 0) { ctx.globalAlpha = clamp(f.flash / 0.12, 0, 1) * 0.85; draw(whiteOf(im)); }
     ctx.restore();
     if (f.guarding || f.shieldHit > 0) this.drawShield(f, h0);
-    if (f.ssjT > 0 && !f.ssj) { const w = 56; ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(f.x - w / 2 - 1, f.y - h0 - 22, w + 2, 7); ctx.fillStyle = '#ffe45f'; ctx.fillRect(f.x - w / 2, f.y - h0 - 21, w * f.ssjT / SSJ_TIME, 5); }
+    if (f.formT > 0 && f.form < (MAXFORM[f.def.id] || 0)) { const w = 56; ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(f.x - w / 2 - 1, f.y - h0 - 22, w + 2, 7); ctx.fillStyle = '#ffe45f'; ctx.fillRect(f.x - w / 2, f.y - h0 - 21, w * f.formT / FORM_TIME[f.form + 1], 5); }
     if (f.state === 'atk') { ctx.save(); ctx.globalAlpha = 0.5 * f.lunge; ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(f.x + f.face * 52, f.y - h0 * 0.55, 34, f.face > 0 ? -1.2 : Math.PI - 1.2 + 0.0, f.face > 0 ? 1.2 : Math.PI + 1.2); ctx.stroke(); ctx.restore(); }
     if (this.team(f) === this.p && f === this.p.f && this.state !== 'end') txt('▼', f.x, f.y - h0 - 8, { size: 16, align: 'center', color: '#ffd23f', shadow: '#000' });
   }
@@ -707,8 +723,8 @@ class Battle {
   drawBars(f, edge, right) {
     const w = 400, x = right ? edge - w : edge;
     txt('KI', right ? x : x, 90, { size: 11, font: LABEL, color: '#ffd23f' });
-    bar(x + 22, 82, w - 22, 9, f.ki / 100, f.ssj ? '#fff27a' : '#ffd23f', 'rgba(255,255,255,0.12)');
-    if (f.ssj) txt('SSJ ' + Math.ceil(f.ssjLeft) + 's', right ? edge : edge, 120, { size: 11, font: LABEL, color: '#ffe45f', align: right ? 'right' : 'left' });
+    bar(x + 22, 82, w - 22, 9, f.ki / 100, f.form ? '#fff27a' : '#ffd23f', 'rgba(255,255,255,0.12)');
+    if (f.form) txt(FORM_TAG[f.form] + ' ' + Math.ceil(f.formLeft) + 's', right ? edge : edge, 120, { size: 11, font: LABEL, color: '#ffe45f', align: right ? 'right' : 'left' });
     txt('GD', x, 104, { size: 11, font: LABEL, color: '#35d0ff' });
     bar(x + 22, 98, w - 22, 6, f.guard / 100, f.guardBroken > 0 ? '#ff4a3a' : '#35d0ff', 'rgba(255,255,255,0.12)', false);
   }
@@ -838,7 +854,7 @@ const Scenes = {
   },
   controls(dt) {
     bgWarm(); txt('COMMANDES', 36, 60, { size: 34, color: '#ffb02e', shadow: '#3a1200' });
-    const rows = [['FLÈCHES / ZQSD / WASD', 'Se déplacer'], ['J', 'Attaque (combo en 3 coups)'], ['K', 'Boule de ki (10 ki)'], ['L', 'Attaque ultime (60 ki)'], ['ESPACE', 'Esquive éclair (8 ki)'], ['MAJ', 'Garde'], ['C', 'Charger le ki (Saiyans : ki max = Super Saiyan)'], ['1 / 2 / 3', 'Changer de combattant'], ['F', 'Plein écran'], ['M', 'Couper le son'], ['ÉCHAP', 'Pause']];
+    const rows = [['FLÈCHES / ZQSD / WASD', 'Se déplacer'], ['J', 'Attaque (combo en 3 coups)'], ['K', 'Boule de ki (10 ki)'], ['L', 'Attaque ultime (60 ki)'], ['ESPACE', 'Esquive éclair (8 ki)'], ['MAJ', 'Garde'], ['C', 'Charger le ki (Saiyans : ki max = Super Saiyan, SSJ2, SSJ3)'], ['1 / 2 / 3', 'Changer de combattant'], ['F', 'Plein écran'], ['M', 'Couper le son'], ['ÉCHAP', 'Pause']];
     rows.forEach((r, i) => { const y = 110 + i * 34; panel(80, y - 22, 220, 30, { c: 6 }); txt(r[0], 92, y, { size: 14, font: LABEL, color: '#ffd23f' }); txt(r[1], 330, y, { size: 18 }); });
     txt('Cycle de styles : FORCE > TECH > RUSE > KI > VIT > FORCE  (×1,25 / ×0,8)', 80, 500, { size: 14, color: '#e0b080' });
     txt('ÉCHAP : RETOUR', W - 36, 52, { size: 12, align: 'right', font: LABEL, color: '#e0b080' });

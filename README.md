@@ -18,7 +18,7 @@ Ouvre `index.html` via un petit serveur local (`python3 -m http.server`) ou la v
 | L | Attaque ultime (60 ki) |
 | Espace | Esquive éclair (8 ki) |
 | Maj | Garde |
-| C | Charger le ki (Saiyans : maintenir à ki max pour passer Super Saiyan) |
+| C | Charger le ki (Saiyans : maintenir à ki max pour se transformer, jusqu'au SSJ3 pour Goku) |
 | 1 / 2 / 3 | Changer de combattant |
 | F / M / Échap | Plein écran / son / pause |
 
