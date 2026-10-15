@@ -186,7 +186,7 @@ class Fighter {
     this.x = x; this.y = y; this.vx = 0; this.vy = 0; this.state = 'idle'; this.st = 0; this.stDur = 1;
     this.combo = 0; this.comboT = 0; this.inv = 0; this.hitImm = 0; this.guarding = false; this.charging = false;
     this.flash = 0; this.face = 1; this.dashCd = 0; this.guardBroken = 0; this.anim = Math.random() * 6;
-    this.didHit = false; this.bufAtk = false; this.fired = false; this.dash = [0, 0]; this.koT = 0; this.lunge = 0;
+    this.walking = false; this.wt = 0; this.didHit = false; this.bufAtk = false; this.fired = false; this.dash = [0, 0]; this.koT = 0; this.lunge = 0;
   }
 }
 
@@ -285,6 +285,7 @@ class Battle {
 
   /* --------- logique des combattants --------- */
   step(f, inp, dt) {
+    f.walking = false;
     const foe = this.foe(f), team = this.team(f), def = f.def;
     f.anim += dt; f.inv -= dt; f.hitImm -= dt; f.flash -= dt; f.dashCd -= dt; f.comboT -= dt; f.guardBroken -= dt;
     if (f.state === 'ko') { f.koT += dt; return; }
@@ -327,7 +328,8 @@ class Battle {
     if (inp.atk) { if (f.comboT <= 0 && f.combo >= 3) f.combo = 0; if (f.comboT <= 0) f.combo = 0; this.startAtk(f); return; }
     if (inp.charge && !f.guarding) { f.charging = true; if (Math.random() < 0.4) this.parts.push({ x: f.x + rand(-30, 30), y: f.y - rand(10, 120), vx: 0, vy: -rand(60, 140), life: 0.5, max: 0.5, color: STYLES[def.style].c, size: 3 }); return; }
     const k = f.guarding ? 0.3 : 1;
-    f.x += inp.mx * 190 * spd * k * dt; f.y += inp.my * 125 * spd * k * dt; this.clampPos(f);
+    f.walking = !!(inp.mx || inp.my) && !f.guarding; if (f.walking) f.wt += dt * 9;
+    f.x += inp.mx * 285 * spd * k * dt; f.y += inp.my * 190 * spd * k * dt; this.clampPos(f);
   }
   startAtk(f) {
     f.combo = Math.min(3, f.combo + 1); const m = MELEE[f.combo - 1];
@@ -478,6 +480,7 @@ class Battle {
     else if (f.state === 'cast') r = fr.cast;
     else if (f.state === 'ult') r = f.fired ? fr.ultf : fr.ultw;
     else if (f.guarding) r = fr.guard;
+    else if (f.walking && fr.walk) { const w = fr.walk; r = Array.isArray(w[0]) ? w[Math.floor(f.wt) % w.length] : w; }
     return { at, r, ref: fr.idle };
   }
   drawFighter(f) {
